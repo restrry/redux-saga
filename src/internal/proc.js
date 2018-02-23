@@ -25,6 +25,7 @@ import { asap, suspend, flush } from './scheduler'
 import { asEffect } from './io'
 import { channel, isEnd } from './channel'
 import matcher from './matcher'
+import reactUtils from './react-error-utils'
 
 export function getMetaInfo(fn) {
   return {
@@ -135,12 +136,16 @@ function createTaskIterator({ context, fn, args }) {
   }
 
   // catch synchronous failures; see #152 and #441
-  let result, error
-  try {
+  let result
+
+  const { error } = callSafely(function() {
     result = fn.apply(context, args)
-  } catch (err) {
-    error = err
-  }
+  })
+  // try {
+  //   result = fn.apply(context, args)
+  // } catch (err) {
+  //   error = err
+  // }
 
   // i.e. a generator function returns an iterator
   if (is.iterator(result)) {
@@ -170,6 +175,28 @@ function createTaskIterator({ context, fn, args }) {
       )
 }
 
+function callSafely(fn) {
+  let result
+  reactUtils.invokeGuardedCallback(
+    null,
+    function callSafelyCaller() {
+      result = fn()
+    },
+    null,
+  )
+
+  if (reactUtils.hasCaughtError()) {
+    const error = reactUtils.clearCaughtError()
+    return {
+      result: null,
+      error,
+    }
+  }
+  return {
+    result,
+    error: null,
+  }
+}
 export default function proc(
   iterator,
   stdChannel,
@@ -302,7 +329,14 @@ export default function proc(
         // We get CHANNEL_END by taking from a channel that ended using `take` (and not `takem` used to trap End of channels)
         result = is.func(iterator.return) ? iterator.return() : { done: true }
       } else {
-        result = iterator.next(arg)
+        const { error } = callSafely(function() {
+          result = iterator.next(arg)
+        })
+        log('info', error)
+        // result = iterator.next(arg)
+        if (error) {
+          // throw error
+        }
       }
 
       if (!result.done) {
@@ -444,6 +478,7 @@ export default function proc(
         catch uncaught cancellations errors; since we can no longer call the completion
         callback, log errors raised during cancellations into the console
       **/
+      // TODO decide should we wrap it or not
       try {
         currCb.cancel()
       } catch (err) {
@@ -492,12 +527,20 @@ export default function proc(
       }
       cb(input)
     }
-    try {
+    // TODO cover with tests
+    const { error } = callSafely(function() {
       channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
-    } catch (err) {
-      cb(err, true)
+    })
+    if (error) {
+      cb(error, true)
       return
     }
+    // try {
+    //   channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
+    // } catch (err) {
+    //   cb(err, true)
+    //   return
+    // }
     cb.cancel = takeCb.cancel
   }
 
@@ -509,12 +552,22 @@ export default function proc(
     **/
     asap(() => {
       let result
-      try {
+
+      const { error } = callSafely(function() {
         result = (channel ? channel.put : dispatch)(action)
-      } catch (error) {
+      })
+
+      if (error) {
         cb(error, true)
         return
       }
+
+      // try {
+      //   result = (channel ? channel.put : dispatch)(action)
+      // } catch (error) {
+      // cb(error, true)
+      // return
+      // }
 
       if (resolve && is.promise(result)) {
         resolvePromise(result, cb)
@@ -529,12 +582,24 @@ export default function proc(
   function runCallEffect({ context, fn, args }, effectId, cb) {
     let result
     // catch synchronous failures; see #152
-    try {
-      result = fn.apply(context, args)
-    } catch (error) {
+
+    reactUtils.invokeGuardedCallback(
+      null,
+      function() {
+        result = fn.call(context, ...args)
+      },
+      null,
+    )
+    if (reactUtils.hasCaughtError()) {
+      const error = reactUtils.clearCaughtError()
       cb(error, true)
-      return
     }
+    // try {
+    //   result = fn.apply(context, args)
+    // } catch (error) {
+    //   cb(error, true)
+    //   return
+    // }
     return is.promise(result)
       ? resolvePromise(result, cb)
       : is.iterator(result) ? resolveIterator(result, effectId, getMetaInfo(fn), cb) : cb(result)
@@ -544,17 +609,29 @@ export default function proc(
     // CPS (ie node style functions) can define their own cancellation logic
     // by setting cancel field on the cb
 
+    // TODO cover with tests
     // catch synchronous failures; see #152
-    try {
+    const { error } = callSafely(function() {
       const cpsCb = (err, res) => (is.undef(err) ? cb(res) : cb(err, true))
       fn.apply(context, args.concat(cpsCb))
       if (cpsCb.cancel) {
         cb.cancel = () => cpsCb.cancel()
       }
-    } catch (error) {
+    })
+    if (error) {
       cb(error, true)
       return
     }
+    // try {
+    //   const cpsCb = (err, res) => (is.undef(err) ? cb(res) : cb(err, true))
+    //   fn.apply(context, args.concat(cpsCb))
+    //   if (cpsCb.cancel) {
+    //     cb.cancel = () => cpsCb.cancel()
+    //   }
+    // } catch (error) {
+    //   cb(error, true)
+    //   return
+    // }
   }
 
   function runForkEffect({ context, fn, args, detached }, effectId, cb) {
@@ -703,12 +780,20 @@ export default function proc(
   }
 
   function runSelectEffect({ selector, args }, cb) {
-    try {
+    const { error } = callSafely(function() {
       const state = selector(getState(), ...args)
       cb(state)
-    } catch (error) {
+    })
+
+    if (error) {
       cb(error, true)
     }
+    // try {
+    //   const state = selector(getState(), ...args)
+    //   cb(state)
+    // } catch (error) {
+    //   cb(error, true)
+    // }
   }
 
   function runChannelEffect({ pattern, buffer }, cb) {

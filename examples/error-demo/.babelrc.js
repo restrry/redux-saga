@@ -3,6 +3,9 @@ module.exports = {
     [
       '@babel/env',
       {
+        targets: {
+          browsers: ['Chrome 62']
+        },
         loose: true,
         modules: process.env.BABEL_ENV === 'cjs' ? 'commonjs' : false,
         exclude: ['transform-typeof-symbol'],
