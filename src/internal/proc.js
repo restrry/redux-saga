@@ -155,9 +155,7 @@ function createTaskIterator({ context, fn, args }) {
   // do not bubble up synchronous failures for detached forks
   // instead create a failed task. See #152 and #441
   return error
-    ? makeIterator(() => {
-        throw error
-      })
+    ? makeIterator(null, null, null, error)
     : makeIterator(
         (function() {
           let pc
@@ -303,58 +301,80 @@ export default function proc(
       throw new Error('Trying to resume an already finished generator')
     }
 
-    try {
-      let result
-      if (isErr) {
+    // try {
+    let result
+    if (isErr) {
+      try {
         result = iterator.throw(arg)
-      } else if (arg === TASK_CANCEL) {
-        /**
+      } catch (error) {
+        if (mainTask.isCancelled) {
+          log('error', error)
+        }
+        mainTask.isMainRunning = false
+        mainTask.cont(error, true)
+        return
+      }
+    } else if (arg === TASK_CANCEL) {
+      /**
           getting TASK_CANCEL automatically cancels the main task
           We can get this value here
 
           - By cancelling the parent task manually
           - By joining a Cancelled task
         **/
-        mainTask.isCancelled = true
-        /**
+      mainTask.isCancelled = true
+      /**
           Cancels the current effect; this will propagate the cancellation down to any called tasks
         **/
-        next.cancel()
-        /**
+      next.cancel()
+      /**
           If this Generator has a `return` method then invokes it
           This will jump to the finally block
         **/
-        result = is.func(iterator.return) ? iterator.return(TASK_CANCEL) : { done: true, value: TASK_CANCEL }
-      } else if (arg === CHANNEL_END) {
-        // We get CHANNEL_END by taking from a channel that ended using `take` (and not `takem` used to trap End of channels)
-        result = is.func(iterator.return) ? iterator.return() : { done: true }
+      result = is.func(iterator.return) ? iterator.return(TASK_CANCEL) : { done: true, value: TASK_CANCEL }
+    } else if (arg === CHANNEL_END) {
+      // We get CHANNEL_END by taking from a channel that ended using `take` (and not `takem` used to trap End of channels)
+      result = is.func(iterator.return) ? iterator.return() : { done: true }
+    } else {
+      let error
+      if (iterator.isSyncFailed) {
+        error = iterator.syncError
       } else {
-        const { error } = callSafely(function() {
+        const safelyCalled = callSafely(function() {
           result = iterator.next(arg)
         })
-        log('info', error)
-        // result = iterator.next(arg)
-        if (error) {
-          // throw error
+        if (safelyCalled.error) {
+          error = safelyCalled.error
         }
       }
 
-      if (!result.done) {
-        digestEffect(result.value, parentEffectId, '', next)
-      } else {
-        /**
+      // result = iterator.next(arg)
+      if (error) {
+        if (mainTask.isCancelled) {
+          log('error', error)
+        }
+        mainTask.isMainRunning = false
+        mainTask.cont(error, true)
+        return
+      }
+    }
+
+    if (!result.done) {
+      digestEffect(result.value, parentEffectId, '', next)
+    } else {
+      /**
           This Generator has ended, terminate the main task and notify the fork queue
         **/
-        mainTask.isMainRunning = false
-        mainTask.cont && mainTask.cont(result.value)
-      }
-    } catch (error) {
-      if (mainTask.isCancelled) {
-        logError(error)
-      }
       mainTask.isMainRunning = false
-      mainTask.cont(error, true)
+      mainTask.cont && mainTask.cont(result.value)
     }
+    // } catch (error) {
+    //   if (mainTask.isCancelled) {
+    //     logError(error)
+    //   }
+    //   mainTask.isMainRunning = false
+    //   mainTask.cont(error, true)
+    // }
   }
 
   function end(result, isErr) {

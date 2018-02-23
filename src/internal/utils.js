@@ -133,8 +133,16 @@ const kThrow = err => {
   throw err
 }
 const kReturn = value => ({ value, done: true })
-export function makeIterator(next, thro = kThrow, name = 'iterator') {
-  const iterator = { meta: { name }, next, throw: thro, return: kReturn, isSagaIterator: true }
+export function makeIterator(next, thro = kThrow, name = 'iterator', syncError = null) {
+  const iterator = {
+    meta: { name },
+    next,
+    throw: thro,
+    return: kReturn,
+    isSyncFailed: Boolean(syncError),
+    syncError,
+    isSagaIterator: true,
+  }
 
   if (typeof Symbol !== 'undefined') {
     iterator[Symbol.iterator] = () => iterator
