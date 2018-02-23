@@ -141,11 +141,6 @@ function createTaskIterator({ context, fn, args }) {
   const { error } = callSafely(function() {
     result = fn.apply(context, args)
   })
-  // try {
-  //   result = fn.apply(context, args)
-  // } catch (err) {
-  //   error = err
-  // }
 
   // i.e. a generator function returns an iterator
   if (is.iterator(result)) {
@@ -290,6 +285,13 @@ export default function proc(
   // then return the task descriptor to the caller
   return task
 
+  function terminateMainTaskDueToError(error) {
+    if (mainTask.isCancelled) {
+      log('error', error)
+    }
+    mainTask.isMainRunning = false
+    mainTask.cont(error, true)
+  }
   /**
     This is the generator driver
     It's a recursive async/continuation function which calls itself
@@ -301,80 +303,60 @@ export default function proc(
       throw new Error('Trying to resume an already finished generator')
     }
 
-    // try {
     let result
     if (isErr) {
       try {
         result = iterator.throw(arg)
       } catch (error) {
-        if (mainTask.isCancelled) {
-          log('error', error)
-        }
-        mainTask.isMainRunning = false
-        mainTask.cont(error, true)
+        terminateMainTaskDueToError(error)
         return
       }
     } else if (arg === TASK_CANCEL) {
       /**
-          getting TASK_CANCEL automatically cancels the main task
-          We can get this value here
+        getting TASK_CANCEL automatically cancels the main task
+        We can get this value here
 
-          - By cancelling the parent task manually
-          - By joining a Cancelled task
-        **/
+        - By cancelling the parent task manually
+        - By joining a Cancelled task
+      **/
       mainTask.isCancelled = true
       /**
-          Cancels the current effect; this will propagate the cancellation down to any called tasks
-        **/
+        Cancels the current effect; this will propagate the cancellation down to any called tasks
+      **/
       next.cancel()
       /**
-          If this Generator has a `return` method then invokes it
-          This will jump to the finally block
-        **/
+        If this Generator has a `return` method then invokes it
+        This will jump to the finally block
+      **/
       result = is.func(iterator.return) ? iterator.return(TASK_CANCEL) : { done: true, value: TASK_CANCEL }
     } else if (arg === CHANNEL_END) {
       // We get CHANNEL_END by taking from a channel that ended using `take` (and not `takem` used to trap End of channels)
       result = is.func(iterator.return) ? iterator.return() : { done: true }
     } else {
-      let error
       if (iterator.isSyncFailed) {
-        error = iterator.syncError
+        terminateMainTaskDueToError(iterator.syncError)
+        return
       } else {
-        const safelyCalled = callSafely(function() {
+        const { error } = callSafely(function() {
           result = iterator.next(arg)
         })
-        if (safelyCalled.error) {
-          error = safelyCalled.error
+        if (error) {
+          terminateMainTaskDueToError(error)
+          return
         }
-      }
-
-      // result = iterator.next(arg)
-      if (error) {
-        if (mainTask.isCancelled) {
-          log('error', error)
-        }
-        mainTask.isMainRunning = false
-        mainTask.cont(error, true)
-        return
       }
     }
 
+    // TODO: think whether it should be wrapped
     if (!result.done) {
       digestEffect(result.value, parentEffectId, '', next)
     } else {
       /**
-          This Generator has ended, terminate the main task and notify the fork queue
-        **/
+        This Generator has ended, terminate the main task and notify the fork queue
+      **/
       mainTask.isMainRunning = false
       mainTask.cont && mainTask.cont(result.value)
     }
-    // } catch (error) {
-    //   if (mainTask.isCancelled) {
-    //     logError(error)
-    //   }
-    //   mainTask.isMainRunning = false
-    //   mainTask.cont(error, true)
-    // }
   }
 
   function end(result, isErr) {
@@ -551,16 +533,12 @@ export default function proc(
     const { error } = callSafely(function() {
       channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
     })
+
     if (error) {
       cb(error, true)
       return
     }
-    // try {
-    //   channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
-    // } catch (err) {
-    //   cb(err, true)
-    //   return
-    // }
+
     cb.cancel = takeCb.cancel
   }
 
@@ -582,13 +560,6 @@ export default function proc(
         return
       }
 
-      // try {
-      //   result = (channel ? channel.put : dispatch)(action)
-      // } catch (error) {
-      // cb(error, true)
-      // return
-      // }
-
       if (resolve && is.promise(result)) {
         resolvePromise(result, cb)
       } else {
@@ -603,23 +574,15 @@ export default function proc(
     let result
     // catch synchronous failures; see #152
 
-    reactUtils.invokeGuardedCallback(
-      null,
-      function() {
-        result = fn.call(context, ...args)
-      },
-      null,
-    )
-    if (reactUtils.hasCaughtError()) {
-      const error = reactUtils.clearCaughtError()
+    const { error } = callSafely(function() {
+      result = fn.apply(context, args)
+    })
+
+    if (error) {
       cb(error, true)
+      return
     }
-    // try {
-    //   result = fn.apply(context, args)
-    // } catch (error) {
-    //   cb(error, true)
-    //   return
-    // }
+
     return is.promise(result)
       ? resolvePromise(result, cb)
       : is.iterator(result) ? resolveIterator(result, effectId, getMetaInfo(fn), cb) : cb(result)
@@ -640,18 +603,7 @@ export default function proc(
     })
     if (error) {
       cb(error, true)
-      return
     }
-    // try {
-    //   const cpsCb = (err, res) => (is.undef(err) ? cb(res) : cb(err, true))
-    //   fn.apply(context, args.concat(cpsCb))
-    //   if (cpsCb.cancel) {
-    //     cb.cancel = () => cpsCb.cancel()
-    //   }
-    // } catch (error) {
-    //   cb(error, true)
-    //   return
-    // }
   }
 
   function runForkEffect({ context, fn, args, detached }, effectId, cb) {
@@ -808,12 +760,6 @@ export default function proc(
     if (error) {
       cb(error, true)
     }
-    // try {
-    //   const state = selector(getState(), ...args)
-    //   cb(state)
-    // } catch (error) {
-    //   cb(error, true)
-    // }
   }
 
   function runChannelEffect({ pattern, buffer }, cb) {
