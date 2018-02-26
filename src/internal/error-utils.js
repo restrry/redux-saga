@@ -1,4 +1,5 @@
 import { SAGA_LOCATION } from './symbols'
+import TryCatchWrapper from './TryCatchWrapper'
 
 function formatLocation(fileName, lineNumber) {
   return `${fileName}?${lineNumber}`
@@ -73,5 +74,28 @@ export function addSagaStack(errorObject, errorStack) {
     }
 
     errorObject.sagaStack.push(errorStack)
+  }
+}
+
+export function callSafely(fn) {
+  let result
+  TryCatchWrapper.invokeGuardedCallback(
+    null,
+    function callSafelyCaller() {
+      result = fn()
+    },
+    null,
+  )
+
+  if (TryCatchWrapper.hasCaughtError()) {
+    const error = TryCatchWrapper.clearCaughtError()
+    return {
+      result: null,
+      error,
+    }
+  }
+  return {
+    result,
+    error: null,
   }
 }

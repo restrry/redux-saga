@@ -19,13 +19,12 @@ import {
   createSetContextWarning,
 } from './utils'
 
-import { getLocation, addSagaStack, sagaStackToString } from './error-utils'
+import { getLocation, addSagaStack, sagaStackToString, callSafely } from './error-utils'
 
 import { asap, suspend, flush } from './scheduler'
 import { asEffect } from './io'
 import { channel, isEnd } from './channel'
 import matcher from './matcher'
-import reactUtils from './react-error-utils'
 
 export function getMetaInfo(fn) {
   return {
@@ -168,28 +167,6 @@ function createTaskIterator({ context, fn, args }) {
       )
 }
 
-function callSafely(fn) {
-  let result
-  reactUtils.invokeGuardedCallback(
-    null,
-    function callSafelyCaller() {
-      result = fn()
-    },
-    null,
-  )
-
-  if (reactUtils.hasCaughtError()) {
-    const error = reactUtils.clearCaughtError()
-    return {
-      result: null,
-      error,
-    }
-  }
-  return {
-    result,
-    error: null,
-  }
-}
 export default function proc(
   iterator,
   stdChannel,
