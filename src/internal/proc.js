@@ -324,7 +324,6 @@ export default function proc(
       }
     }
 
-    // TODO: think whether it should be wrapped
     if (!result.done) {
       digestEffect(result.value, parentEffectId, '', next)
     } else {
@@ -457,7 +456,6 @@ export default function proc(
         catch uncaught cancellations errors; since we can no longer call the completion
         callback, log errors raised during cancellations into the console
       **/
-      // TODO decide should we wrap it or not
       try {
         currCb.cancel()
       } catch (err) {
@@ -506,7 +504,7 @@ export default function proc(
       }
       cb(input)
     }
-    // TODO cover with tests
+
     const { error } = callSafely(function() {
       channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
     })
@@ -569,7 +567,6 @@ export default function proc(
     // CPS (ie node style functions) can define their own cancellation logic
     // by setting cancel field on the cb
 
-    // TODO cover with tests
     // catch synchronous failures; see #152
     const { error } = callSafely(function() {
       const cpsCb = (err, res) => (is.undef(err) ? cb(res) : cb(err, true))
