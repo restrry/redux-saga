@@ -77,11 +77,20 @@ export function addSagaStack(errorObject, errorStack) {
   }
 }
 
-export function callSafely(fn) {
+function tryCatchNative(fn) {
+  try {
+    const result = fn()
+    return { result, error: null }
+  } catch (error) {
+    return { result: null, error }
+  }
+}
+
+function tryCatchWrapped(fn) {
   let result
   TryCatchWrapper.invokeGuardedCallback(
     null,
-    function callSafelyCaller() {
+    function tryCatchCallCaller() {
       result = fn()
     },
     null,
@@ -97,5 +106,16 @@ export function callSafely(fn) {
   return {
     result,
     error: null,
+  }
+}
+
+export function createTryCatchCall(shouldWrap = false) {
+  // we try to catch errors only in native generators. because if user uses renegerator,
+  // for example, it catches errors and re-throw them inside, we want to avoid pausing
+  // in that case
+  if (shouldWrap) {
+    return tryCatchWrapped
+  } else {
+    return tryCatchNative
   }
 }

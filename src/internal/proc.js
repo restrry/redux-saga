@@ -19,7 +19,7 @@ import {
   createSetContextWarning,
 } from './utils'
 
-import { getLocation, addSagaStack, sagaStackToString, callSafely } from './error-utils'
+import { getLocation, addSagaStack, sagaStackToString } from './error-utils'
 
 import { asap, suspend, flush } from './scheduler'
 import { asEffect } from './io'
@@ -129,44 +129,6 @@ function forkQueue(mainTask, onAbort, cb) {
   }
 }
 
-function createTaskIterator({ context, fn, args }) {
-  if (is.iterator(fn)) {
-    return fn
-  }
-
-  // catch synchronous failures; see #152 and #441
-  let result
-
-  const { error } = callSafely(function() {
-    result = fn.apply(context, args)
-  })
-
-  // i.e. a generator function returns an iterator
-  if (is.iterator(result)) {
-    return result
-  }
-
-  // do not bubble up synchronous failures for detached forks
-  // instead create a failed task. See #152 and #441
-  return error
-    ? makeIterator(null, null, null, error)
-    : makeIterator(
-        (function() {
-          let pc
-          const eff = { done: false, value: result }
-          const ret = value => ({ done: true, value })
-          return arg => {
-            if (!pc) {
-              pc = true
-              return eff
-            } else {
-              return ret(arg)
-            }
-          }
-        })(),
-      )
-}
-
 export default function proc(
   iterator,
   stdChannel,
@@ -178,7 +140,7 @@ export default function proc(
   meta,
   cont,
 ) {
-  const { sagaMonitor, logger, onError, middleware } = options
+  const { sagaMonitor, logger, onError, middleware, tryCatchCall } = options
   const log = logger || _log
 
   const logError = err => {
@@ -314,7 +276,7 @@ export default function proc(
         terminateMainTaskDueToError(iterator.syncError)
         return
       } else {
-        const { error } = callSafely(function() {
+        const { error } = tryCatchCall(function() {
           result = iterator.next(arg)
         })
         if (error) {
@@ -505,7 +467,7 @@ export default function proc(
       cb(input)
     }
 
-    const { error } = callSafely(function() {
+    const { error } = tryCatchCall(function() {
       channel.take(takeCb, is.notUndef(pattern) ? matcher(pattern) : null)
     })
 
@@ -526,7 +488,7 @@ export default function proc(
     asap(() => {
       let result
 
-      const { error } = callSafely(function() {
+      const { error } = tryCatchCall(function() {
         result = (channel ? channel.put : dispatch)(action)
       })
 
@@ -549,7 +511,7 @@ export default function proc(
     let result
     // catch synchronous failures; see #152
 
-    const { error } = callSafely(function() {
+    const { error } = tryCatchCall(function() {
       result = fn.apply(context, args)
     })
 
@@ -568,7 +530,7 @@ export default function proc(
     // by setting cancel field on the cb
 
     // catch synchronous failures; see #152
-    const { error } = callSafely(function() {
+    const { error } = tryCatchCall(function() {
       const cpsCb = (err, res) => (is.undef(err) ? cb(res) : cb(err, true))
       fn.apply(context, args.concat(cpsCb))
       if (cpsCb.cancel) {
@@ -726,7 +688,7 @@ export default function proc(
   }
 
   function runSelectEffect({ selector, args }, cb) {
-    const { error } = callSafely(function() {
+    const { error } = tryCatchCall(function() {
       const state = selector(getState(), ...args)
       cb(state)
     })
@@ -809,5 +771,43 @@ export default function proc(
         object.assign(taskContext, props)
       },
     }
+  }
+
+  function createTaskIterator({ context, fn, args }) {
+    if (is.iterator(fn)) {
+      return fn
+    }
+
+    // catch synchronous failures; see #152 and #441
+    let result
+
+    const { error } = tryCatchCall(function() {
+      result = fn.apply(context, args)
+    })
+
+    // i.e. a generator function returns an iterator
+    if (is.iterator(result)) {
+      return result
+    }
+
+    // do not bubble up synchronous failures for detached forks
+    // instead create a failed task. See #152 and #441
+    return error
+      ? makeIterator(null, null, null, error)
+      : makeIterator(
+          (function() {
+            let pc
+            const eff = { done: false, value: result }
+            const ret = value => ({ done: true, value })
+            return arg => {
+              if (!pc) {
+                pc = true
+                return eff
+              } else {
+                return ret(arg)
+              }
+            }
+          })(),
+        )
   }
 }

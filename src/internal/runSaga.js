@@ -1,5 +1,6 @@
 import { compose } from 'redux'
 import { is, check, uid as nextSagaId, wrapSagaDispatch, noop } from './utils'
+import { createTryCatchCall } from './error-utils'
 import proc, { getMetaInfo } from './proc'
 import { stdChannel } from './channel'
 
@@ -49,13 +50,17 @@ export function runSaga(options, saga, ...args) {
 
   const middleware = effectMiddlewares && compose(...effectMiddlewares)
 
+  // wrap only if native generators are supported, regenerator and other tranformers re-throw errors
+  // so we don't want to have pause on exceptions for rethrown errors
+  const tryCatchCall = createTryCatchCall(is.nativeGenerator(saga))
+
   const task = proc(
     iterator,
     channel,
     wrapSagaDispatch(dispatch),
     getState,
     context,
-    { sagaMonitor, logger, onError, middleware },
+    { sagaMonitor, logger, onError, middleware, tryCatchCall },
     effectId,
     getMetaInfo(saga),
   )

@@ -8,8 +8,6 @@
  * https://github.com/facebook/react/blob/46b3c3e4ae0d52565f7ed2344036a22016781ca0/packages/shared/ReactErrorUtils.js
  * https://github.com/facebook/react/blob/46b3c3e4ae0d52565f7ed2344036a22016781ca0/packages/shared/invokeGuardedCallback.js
  */
-import { invariant } from './utils'
-
 let invokeGuardedCallback = function(name, func, context, ...funcArgs) {
   this._hasCaughtError = false
   this._caughtError = null
@@ -169,8 +167,7 @@ const TryCatchWrapper = {
       TryCatchWrapper._hasCaughtError = false
       return error
     } else {
-      invariant(
-        false,
+      throw new Error(
         'clearCaughtError was called but no error was captured. This error ' +
           'is likely caused by a bug in Redux-saga. Please file an issue.',
       )
